@@ -1,0 +1,570 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {},
+    "variables": {},
+    "resources": [
+        {
+            "type": "Microsoft.Logic/workflows",
+            "apiVersion": "2017-07-01",
+            "name": "OutlookNotification",
+            "location": "japaneast",
+            "properties": {
+                "state": "Enabled",
+                "definition": {
+                    "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+                    "contentVersion": "1.0.0.0",
+                    "parameters": {
+                        "BacklogApiKey": {
+                            "defaultValue": "<Your API Key here>",
+                            "type": "String"
+                        },
+                        "BacklogProjectKey": {
+                            "defaultValue": "<Your project key here>",
+                            "type": "String"
+                        },
+                        "BacklogApiHostName": {
+                            "defaultValue": "<Space key>.backlog.(com|jp)",
+                            "type": "String"
+                        },
+                        "BacklogIssueTypeId": {
+                            "defaultValue": 0,
+                            "type": "Int"
+                        },
+                        "$connections": {
+                            "defaultValue": {},
+                            "type": "Object"
+                        }
+                    },
+                    "triggers": {
+                        "新しいメールが届いたとき_(V2)": {
+                            "splitOn": "@triggerBody()?['value']",
+                            "type": "ApiConnectionNotification",
+                            "inputs": {
+                                "host": {
+                                    "connection": {
+                                        "name": "@parameters('$connections')['outlook-1']['connectionId']"
+                                    }
+                                },
+                                "fetch": {
+                                    "pathTemplate": {
+                                        "template": "/v2/Mail/OnNewEmail"
+                                    },
+                                    "method": "get"
+                                },
+                                "subscribe": {
+                                    "body": {
+                                        "NotificationUrl": "@listCallbackUrl()"
+                                    },
+                                    "pathTemplate": {
+                                        "template": "/MailSubscriptionPoke/$subscriptions"
+                                    },
+                                    "method": "post"
+                                }
+                            },
+                            "description": "Backlogに転送するメールを絞り込みたい場合はここで詳細条件追加して"
+                        }
+                    },
+                    "actions": {
+                        "Get_Backlog_project_id": {
+                            "runAfter": {},
+                            "type": "Http",
+                            "inputs": {
+                                "uri": "@concat('https://', parameters('BacklogApiHostName'), '/api/v2/projects/', parameters('BacklogProjectKey'))",
+                                "method": "GET",
+                                "queries": {
+                                    "apiKey": "@{parameters('BacklogApiKey')}"
+                                }
+                            },
+                            "description": "",
+                            "runtimeConfiguration": {
+                                "contentTransfer": {
+                                    "transferMode": "Chunked"
+                                }
+                            }
+                        },
+                        "Parse_JSON_of_backlog_project_infomation": {
+                            "runAfter": {
+                                "Get_Backlog_project_id": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ParseJson",
+                            "inputs": {
+                                "content": "@body('Get_Backlog_project_id')",
+                                "schema": {
+                                    "type": "object",
+                                    "properties": {
+                                        "id": {
+                                            "type": "integer"
+                                        },
+                                        "projectKey": {
+                                            "type": "string"
+                                        },
+                                        "name": {
+                                            "type": "string"
+                                        },
+                                        "chartEnabled": {
+                                            "type": "boolean"
+                                        },
+                                        "useResolvedForChart": {
+                                            "type": "boolean"
+                                        },
+                                        "subtaskingEnabled": {
+                                            "type": "boolean"
+                                        },
+                                        "projectLeaderCanEditProjectLeader": {
+                                            "type": "boolean"
+                                        },
+                                        "useWiki": {
+                                            "type": "boolean"
+                                        },
+                                        "useDocument": {
+                                            "type": "boolean"
+                                        },
+                                        "useFileSharing": {
+                                            "type": "boolean"
+                                        },
+                                        "useWikiTreeView": {
+                                            "type": "boolean"
+                                        },
+                                        "useSubversion": {
+                                            "type": "boolean"
+                                        },
+                                        "useGit": {
+                                            "type": "boolean"
+                                        },
+                                        "useOriginalImageSizeAtWiki": {
+                                            "type": "boolean"
+                                        },
+                                        "textFormattingRule": {
+                                            "type": "string"
+                                        },
+                                        "archived": {
+                                            "type": "boolean"
+                                        },
+                                        "displayOrder": {
+                                            "type": "integer"
+                                        },
+                                        "useDevAttributes": {
+                                            "type": "boolean"
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "Initialize_variables": {
+                            "runAfter": {
+                                "Parse_JSON_of_backlog_project_infomation": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "InitializeVariable",
+                            "inputs": {
+                                "variables": [
+                                    {
+                                        "name": "BacklogProjectID",
+                                        "type": "string",
+                                        "value": "@{body('Parse_JSON_of_backlog_project_infomation')?['id']}"
+                                    }
+                                ]
+                            }
+                        },
+                        "Get_exist_backlog_issue": {
+                            "runAfter": {
+                                "Initialize_variables": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "Http",
+                            "inputs": {
+                                "uri": "@concat('https://', parameters('BacklogApiHostName'), '/api/v2/issues')",
+                                "method": "GET",
+                                "queries": {
+                                    "projectId[]": "@{variables('BacklogProjectID')}",
+                                    "keyword": "@{triggerBody()?['ConversationId']}",
+                                    "count": "1",
+                                    "apiKey": "@{parameters('BacklogApiKey')}"
+                                }
+                            },
+                            "runtimeConfiguration": {
+                                "contentTransfer": {
+                                    "transferMode": "Chunked"
+                                }
+                            }
+                        },
+                        "Parse_JSON_of_the_exist_backlog_issue": {
+                            "runAfter": {
+                                "Get_exist_backlog_issue": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "type": "ParseJson",
+                            "inputs": {
+                                "content": "@body('Get_exist_backlog_issue')",
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "object",
+                                        "properties": {
+                                            "id": {
+                                                "type": "integer"
+                                            },
+                                            "projectId": {
+                                                "type": "integer"
+                                            },
+                                            "issueKey": {
+                                                "type": "string"
+                                            },
+                                            "keyId": {
+                                                "type": "integer"
+                                            },
+                                            "issueType": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    },
+                                                    "projectId": {
+                                                        "type": "integer"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "color": {
+                                                        "type": "string"
+                                                    },
+                                                    "displayOrder": {
+                                                        "type": "integer"
+                                                    }
+                                                }
+                                            },
+                                            "summary": {
+                                                "type": "string"
+                                            },
+                                            "description": {
+                                                "type": "string"
+                                            },
+                                            "resolution": {},
+                                            "priority": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    }
+                                                }
+                                            },
+                                            "status": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    },
+                                                    "projectId": {
+                                                        "type": "integer"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "color": {
+                                                        "type": "string"
+                                                    },
+                                                    "displayOrder": {
+                                                        "type": "integer"
+                                                    }
+                                                }
+                                            },
+                                            "assignee": {},
+                                            "category": {
+                                                "type": "array"
+                                            },
+                                            "versions": {
+                                                "type": "array"
+                                            },
+                                            "milestone": {
+                                                "type": "array"
+                                            },
+                                            "startDate": {},
+                                            "dueDate": {},
+                                            "estimatedHours": {},
+                                            "actualHours": {},
+                                            "parentIssueId": {},
+                                            "createdUser": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    },
+                                                    "userId": {
+                                                        "type": "string"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "roleType": {
+                                                        "type": "integer"
+                                                    },
+                                                    "lang": {
+                                                        "type": "string"
+                                                    },
+                                                    "mailAddress": {
+                                                        "type": "string"
+                                                    },
+                                                    "nulabAccount": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "nulabId": {
+                                                                "type": "string"
+                                                            },
+                                                            "name": {
+                                                                "type": "string"
+                                                            },
+                                                            "uniqueId": {
+                                                                "type": "string"
+                                                            },
+                                                            "iconUrl": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    "keyword": {
+                                                        "type": "string"
+                                                    },
+                                                    "lastLoginTime": {
+                                                        "type": "string"
+                                                    }
+                                                }
+                                            },
+                                            "created": {
+                                                "type": "string"
+                                            },
+                                            "updatedUser": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "id": {
+                                                        "type": "integer"
+                                                    },
+                                                    "userId": {
+                                                        "type": "string"
+                                                    },
+                                                    "name": {
+                                                        "type": "string"
+                                                    },
+                                                    "roleType": {
+                                                        "type": "integer"
+                                                    },
+                                                    "lang": {
+                                                        "type": "string"
+                                                    },
+                                                    "mailAddress": {
+                                                        "type": "string"
+                                                    },
+                                                    "nulabAccount": {
+                                                        "type": "object",
+                                                        "properties": {
+                                                            "nulabId": {
+                                                                "type": "string"
+                                                            },
+                                                            "name": {
+                                                                "type": "string"
+                                                            },
+                                                            "uniqueId": {
+                                                                "type": "string"
+                                                            },
+                                                            "iconUrl": {
+                                                                "type": "string"
+                                                            }
+                                                        }
+                                                    },
+                                                    "keyword": {
+                                                        "type": "string"
+                                                    },
+                                                    "lastLoginTime": {
+                                                        "type": "string"
+                                                    }
+                                                }
+                                            },
+                                            "updated": {
+                                                "type": "string"
+                                            },
+                                            "customFields": {
+                                                "type": "array"
+                                            },
+                                            "attachments": {
+                                                "type": "array"
+                                            },
+                                            "sharedFiles": {
+                                                "type": "array"
+                                            },
+                                            "externalFileLinks": {
+                                                "type": "array"
+                                            },
+                                            "stars": {
+                                                "type": "array"
+                                            }
+                                        },
+                                        "required": [
+                                            "id",
+                                            "projectId",
+                                            "issueKey",
+                                            "keyId",
+                                            "issueType",
+                                            "summary",
+                                            "description",
+                                            "resolution",
+                                            "priority",
+                                            "status",
+                                            "assignee",
+                                            "category",
+                                            "versions",
+                                            "milestone",
+                                            "startDate",
+                                            "dueDate",
+                                            "estimatedHours",
+                                            "actualHours",
+                                            "parentIssueId",
+                                            "createdUser",
+                                            "created",
+                                            "updatedUser",
+                                            "updated",
+                                            "customFields",
+                                            "attachments",
+                                            "sharedFiles",
+                                            "externalFileLinks",
+                                            "stars"
+                                        ]
+                                    }
+                                }
+                            }
+                        },
+                        "Is_already_exist_issue": {
+                            "actions": {
+                                "For_each": {
+                                    "foreach": "@outputs('Parse_JSON_of_the_exist_backlog_issue')['body']",
+                                    "actions": {
+                                        "Always_true": {
+                                            "actions": {
+                                                "Edit_description_in_exist_issue": {
+                                                    "type": "Http",
+                                                    "inputs": {
+                                                        "uri": "@concat('https://', parameters('BacklogApiHostName'), '/api/v2/issues/', item()['id'])",
+                                                        "method": "PATCH",
+                                                        "headers": {
+                                                            "Content-Type": "application/x-www-form-urlencoded"
+                                                        },
+                                                        "queries": {
+                                                            "apiKey": "@{parameters('BacklogApiKey')}"
+                                                        },
+                                                        "body": "@concat('description=', encodeUriComponent(concat('件名：', triggerBody()?['Subject'], '<br>送信者: ', triggerBody()?['From'], '<br>受信者：', triggerBody()?['To'], '<br>CC：', triggerBody()?['Cc'], '<br><h2>本文</h2>', triggerBody()?['Body'])))"
+                                                    },
+                                                    "runtimeConfiguration": {
+                                                        "contentTransfer": {
+                                                            "transferMode": "Chunked"
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "else": {
+                                                "actions": {
+                                                    "Post_new_comment_into_the_exist_issue": {
+                                                        "type": "Http",
+                                                        "inputs": {
+                                                            "uri": "@concat('https://', parameters('BacklogApiHostName'), '/api/v2/issues/', item()['id'], '/comments')",
+                                                            "method": "POST",
+                                                            "headers": {
+                                                                "Content-Type": "application/x-www-form-urlencoded"
+                                                            },
+                                                            "queries": {
+                                                                "apiKey": "@{parameters('BacklogApiKey')}"
+                                                            },
+                                                            "body": "@concat('content=', encodeUriComponent(triggerBody()?['Body']))"
+                                                        },
+                                                        "runtimeConfiguration": {
+                                                            "contentTransfer": {
+                                                                "transferMode": "Chunked"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "expression": {
+                                                "or": [
+                                                    {
+                                                        "equals": [
+                                                            true,
+                                                            true
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            "type": "If"
+                                        }
+                                    },
+                                    "type": "Foreach"
+                                }
+                            },
+                            "runAfter": {
+                                "Parse_JSON_of_the_exist_backlog_issue": [
+                                    "Succeeded"
+                                ]
+                            },
+                            "else": {
+                                "actions": {
+                                    "Post_new_backlog_issue": {
+                                        "type": "Http",
+                                        "inputs": {
+                                            "uri": "@concat('https://', parameters('BacklogApiHostName'), '/api/v2/issues')",
+                                            "method": "POST",
+                                            "queries": {
+                                                "apiKey": "@{parameters('BacklogApiKey')}"
+                                            },
+                                            "body": {
+                                                "projectId": "@variables('BacklogProjectID')",
+                                                "summary": "@triggerBody()?['ConversationId']",
+                                                "issueTypeId": "@parameters('BacklogIssueTypeId')",
+                                                "priorityId": 3,
+                                                "description": "@string(concat('件名：', triggerBody()?['Subject'], '<br>送信者: ', triggerBody()?['From'], '<br>受信者：', triggerBody()?['To'], '<br>CC：', triggerBody()?['Cc'], '<br><h2>本文</h2>', triggerBody()?['Body']))"
+                                            }
+                                        },
+                                        "runtimeConfiguration": {
+                                            "contentTransfer": {
+                                                "transferMode": "Chunked"
+                                            }
+                                        }
+                                    }
+                                }
+                            },
+                            "expression": {
+                                "and": [
+                                    {
+                                        "greaterOrEquals": [
+                                            "@length(body('Parse_JSON_of_the_exist_backlog_issue'))",
+                                            1
+                                        ]
+                                    }
+                                ]
+                            },
+                            "type": "If"
+                        }
+                    },
+                    "outputs": {}
+                },
+                "parameters": {
+                    "$connections": {
+                        "value": {
+                            "outlook-1": {
+                                "id": "/subscriptions/e950d36f-3332-4333-94bf-a0638e4985a3/providers/Microsoft.Web/locations/japaneast/managedApis/outlook",
+                                "connectionId": "/subscriptions/e950d36f-3332-4333-94bf-a0638e4985a3/resourceGroups/OutlookNotification/providers/Microsoft.Web/connections/outlook-1",
+                                "connectionName": "outlook-1",
+                                "connectionProperties": {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    ]
+}
